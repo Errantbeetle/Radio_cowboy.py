@@ -1,0 +1,634 @@
+import pygame
+import sys
+import os
+from start_screen import StartScreen
+from game_module import Game
+from npc_dialogue import NPCDialogue
+
+def main():
+    pygame.init()
+    pygame.mixer.init()  # Initialize the mixer module
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    menu_music_path = os.path.join(current_dir, 'background_music.mp3')
+    npc_image_path = os.path.join(current_dir, 'indiana_pete.png')  # Path to NPC image
+    font_path = os.path.join(current_dir, 'Pixellettersfull-BnJ5.ttf')  # Path to font file
+    intro_voice_path = os.path.join(current_dir, 'intro_voice.wav')  # Path to intro voice file
+
+    pygame.mixer.music.load(menu_music_path)  # Load the music file
+    pygame.mixer.music.set_volume(0.5)  # Set the volume (0.0 to 1.0)
+    pygame.mixer.music.play(-1)  # Play the music in a loop
+
+    # Load the intro voice file
+    intro_voice = pygame.mixer.Sound(intro_voice_path)
+    intro_voice.set_volume(0.5)  # Set the volume for the intro voice
+
+    info = pygame.display.Info()
+    screen_width, screen_height = info.current_w, info.current_h
+    screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+    pygame.display.set_caption("Radio Cowboy")
+    
+    start_screen = StartScreen(screen)
+    game = Game(screen)
+
+    # Initialize NPC dialogue
+    npc_dialogue = NPCDialogue(screen, npc_image_path, font_path)
+    dialogues = [
+        "Welcome to the world of Radio Cowboy! I'm Indiana Pete. Let's get started...",
+        "Remember to check your equipment before every mission.",
+        "Good luck out there, space cowboy!"
+    ]
+
+    clock = pygame.time.Clock()
+    running = True
+    game_started = False
+    dialogue_start_time = None
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+                game.joystick.handle_event(event)
+                game.radio_knob.handle_event(event)
+
+            # Handle NPC dialogue events
+            npc_dialogue.handle_event(event)
+
+        if not game_started:
+            action = start_screen.update()
+            start_screen.draw()
+            if action == "start_game":
+                pygame.mixer.music.stop()  # Stop the menu music when the game starts
+                intro_voice.play()  # Play the intro voice
+                game_started = True
+                dialogue_start_time = pygame.time.get_ticks()  # Record the start time
+            elif action == "options":
+                print("Options selected")
+            elif action == "credits":
+                start_screen.state = "credits"
+        else:
+            game.update()
+            game.draw()
+
+            # Show dialogue after 5 seconds
+            if dialogue_start_time and pygame.time.get_ticks() - dialogue_start_time > 5000 and not npc_dialogue.is_dialogue_active():
+                npc_dialogue.set_dialogue(dialogues)
+
+            npc_dialogue.update()
+            npc_dialogue.draw()
+
+        pygame.display.flip()
+        clock.tick(60)
+    
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
+
+import pygame
+import math
+import random
+import os
+from joystick import Joystick
+from star_field import StarField  # Import the StarField class
+from radio_knob import RadioKnob  # Import the RadioKnob class
+
+class Particle:
+    def __init__(self, x, y, dx, dy):
+        self.x = x
+        self.y = y
+        self.dx = dx
+        self.dy = dy
+        self.size = random.randint(1, 3)
+        self.color = (255, 0, 0)
+        self.lifetime = random.randint(20, 40)
+
+    def update(self):
+        self.x += self.dx
+        self.y += self.dy
+        self.lifetime -= 1
+
+    def draw(self, screen, offset):
+        if self.lifetime > 0:
+            pygame.draw.rect(screen, self.color, (self.x - offset[0], self.y - offset[1], self.size, self.size))
+
+class Spaceship:
+    def __init__(self, x, y, thruster_sound):
+        self.x = x
+        self.y = y
+        self.angle = 0
+        self.velocity = pygame.Vector2(0, 0)
+        self.thrust = 0.1
+        self.max_speed = 5
+        self.particles = []
+        self.thruster_sound = thruster_sound
+        self.is_moving = False
+
+    def update(self, direction):
+        self.angle = math.atan2(direction[1], direction[0]) if direction != (0, 0) else self.angle
+
+        if direction != (0, 0):
+            self.velocity.x += self.thrust * direction[0]
+            self.velocity.y += self.thrust * direction[1]
+            if not self.is_moving:
+                self.thruster_sound.play(-1)  # Loop the sound
+                self.is_moving = True
+        else:
+            if self.is_moving:
+                self.thruster_sound.stop()
+                self.is_moving = False
+
+        if self.velocity.length() > self.max_speed:
+            self.velocity.scale_to_length(self.max_speed)
+
+        self.x += self.velocity.x
+        self.y += self.velocity.y
+
+        if direction != (0, 0):
+            angle_rad = math.radians(self.angle)
+            particle_dx = -math.cos(angle_rad) * 2
+            particle_dy = -math.sin(angle_rad) * 2
+            self.particles.append(Particle(self.x, self.y, particle_dx, particle_dy))
+
+        self.particles = [p for p in self.particles if p.lifetime > 0]
+        for particle in self.particles:
+            particle.update()
+
+    def draw(self, screen, offset):
+        points = [
+            (self.x + math.cos(self.angle) * 10 - offset[0], self.y + math.sin(self.angle) * 10 - offset[1]),
+            (self.x + math.cos(self.angle + 2.4) * 10 - offset[0], self.y + math.sin(self.angle + 2.4) * 10 - offset[1]),
+            (self.x + math.cos(self.angle - 2.4) * 10 - offset[0], self.y + math.sin(self.angle - 2.4) * 10 - offset[1])
+        ]
+        pygame.draw.polygon(screen, (0, 128, 255), points)
+
+        for particle in self.particles:
+            particle.draw(screen, offset)
+
+class Game:
+    def __init__(self, screen):
+        self.screen = screen
+        self.width, self.height = screen.get_size()
+
+        # Load thruster sound
+        self.thruster_sound = pygame.mixer.Sound(os.path.join(os.path.dirname(__file__), 'thrusters.wav'))
+        self.thruster_sound.set_volume(0.5)  # Set the volume if needed
+
+        self.spaceship = Spaceship(self.width // 2, self.height // 2, self.thruster_sound)
+
+        # Initialize star field
+        self.star_field = StarField(self.width, self.height, 100)
+
+        # Adjust the joystick position to be more to the left and more up
+        joystick_x = 200  # Move more to the left
+        joystick_y = 1000  # Move more up
+        self.joystick = Joystick(joystick_x, joystick_y, 50, 25)
+
+        # Initialize the radio knob with MP3 stations
+        self.station_files = [
+            os.path.join(os.path.dirname(__file__), 'station1.mp3'),
+            os.path.join(os.path.dirname(__file__), 'station2.mp3'),
+            os.path.join(os.path.dirname(__file__), 'station3.mp3'),
+            os.path.join(os.path.dirname(__file__), 'station4.mp3')
+        ]
+        knob_x = self.width - 150
+        knob_y = self.height - 150
+        self.radio_knob = RadioKnob(knob_x, knob_y, 50, self.station_files)
+        self.current_station = None
+
+    def update(self):
+        direction = self.joystick.get_direction()
+        self.spaceship.update(direction)
+        self.star_field.update(self.spaceship.velocity)
+
+        _, station_changed = self.radio_knob.get_current_station()
+        if station_changed:
+            self.change_station()
+
+    def change_station(self):
+        station, _ = self.radio_knob.get_current_station()
+        if self.current_station is not None:
+            pygame.mixer.music.stop()
+        self.current_station = station
+        file_path = self.station_files[self.current_station]
+        pygame.mixer.music.load(file_path)
+        pygame.mixer.music.play(-1)
+
+    def draw(self):
+        self.screen.fill((0, 0, 0))
+        offset = (self.spaceship.x - self.width // 2, self.spaceship.y - self.height // 2)
+
+        # Draw the star field
+        self.star_field.draw(self.screen)
+
+        self.spaceship.draw(self.screen, offset)
+        self.joystick.draw(self.screen)
+        self.radio_knob.draw(self.screen)
+
+        pygame.display.flip()
+
+import pygame
+
+class Joystick:
+    def __init__(self, x, y, outer_radius, inner_radius):
+        self.x = x
+        self.y = y
+        self.outer_radius = outer_radius
+        self.inner_radius = inner_radius
+        self.active = False
+        self.inner_pos = (x, y)
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if self._distance(self.x, self.y, event.pos[0], event.pos[1]) <= self.outer_radius:
+                self.active = True
+        elif event.type == pygame.MOUSEBUTTONUP:
+            self.active = False
+            self.inner_pos = (self.x, self.y)
+        elif event.type == pygame.MOUSEMOTION:
+            if self.active:
+                dx = event.pos[0] - self.x
+                dy = event.pos[1] - self.y
+                distance = self._distance(self.x, self.y, event.pos[0], event.pos[1])
+                if distance > self.outer_radius:
+                    ratio = self.outer_radius / distance
+                    dx *= ratio
+                    dy *= ratio
+                self.inner_pos = (self.x + dx, self.y + dy)
+
+    def get_direction(self):
+        dx = self.inner_pos[0] - self.x
+        dy = self.inner_pos[1] - self.y
+        max_distance = self.outer_radius - self.inner_radius
+        return dx / max_distance, dy / max_distance
+
+    def draw(self, screen):
+        pygame.draw.circle(screen, (150, 150, 150), (self.x, self.y), self.outer_radius, 3)  # Corrected color values
+        pygame.draw.circle(screen, (255, 0, 0), self.inner_pos, self.inner_radius)
+
+    def _distance(self, x1, y1, x2, y2):
+        return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+
+import pygame
+import math
+
+class RadioKnob:
+    def __init__(self, x, y, radius, station_files):
+        self.x = x
+        self.y = y
+        self.radius = radius
+        self.angle = 0
+        self.active = False
+        self.station_files = station_files
+        self.current_station = 0
+        self.knob_center = (self.x, self.y)
+        self.station_changed = False
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if self._distance(self.x, self.y, event.pos[0], event.pos[1]) <= self.radius:
+                self.active = True
+        elif event.type == pygame.MOUSEBUTTONUP:
+            self.active = False
+        elif event.type == pygame.MOUSEMOTION and self.active:
+            self._rotate_knob(event.pos)
+
+    def _rotate_knob(self, mouse_pos):
+        dx = mouse_pos[0] - self.x
+        dy = mouse_pos[1] - self.y
+        new_angle = math.degrees(math.atan2(dy, dx))
+        if new_angle < 0:
+            new_angle += 360
+
+        if abs(new_angle - self.angle) > 30:  # Threshold to change station
+            self.angle = new_angle
+            self.current_station = (self.current_station + 1) % len(self.station_files)
+            self.station_changed = True
+
+    def draw(self, screen):
+        pygame.draw.circle(screen, (200, 200, 200), self.knob_center, self.radius)
+        end_x = self.x + self.radius * math.cos(math.radians(self.angle))
+        end_y = self.y + self.radius * math.sin(math.radians(self.angle))
+        pygame.draw.line(screen, (0, 0, 0), self.knob_center, (end_x, end_y), 3)
+
+    def _distance(self, x1, y1, x2, y2):
+        return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+
+    def get_current_station(self):
+        if self.station_changed:
+            self.station_changed = False
+            return self.current_station, True
+        return self.current_station, False
+
+import pygame
+import os
+
+class NPCDialogue:
+    def __init__(self, screen, npc_image_path, font_path, font_size=36):
+        self.screen = screen
+        self.width, self.height = screen.get_size()
+
+        # Load and scale NPC image
+        self.npc_image = pygame.image.load(npc_image_path).convert_alpha()
+        self.npc_image = pygame.transform.scale(self.npc_image, (120, 120))  # Increase image size
+        self.npc_image_rect = self.npc_image.get_rect()
+
+        # Load font
+        self.font = pygame.font.Font(font_path, font_size)
+
+        # Text box settings
+        self.text_box_rect = pygame.Rect(50, 50, self.width - 100, 220)  # Enlarge text box
+        self.border_color = (200, 200, 200)
+        self.bg_color = (0, 0, 0, 128)  # semi-transparent background
+        self.text_color = (255, 255, 255)
+        self.padding = 20
+
+        self.dialogue = []
+        self.current_dialogue_index = 0
+        self.displayed_text = ""
+        self.typing_speed = 50  # milliseconds per character
+        self.last_update = pygame.time.get_ticks()
+        self.text_index = 0
+
+        # Continue button settings
+        self.continue_button_rect = pygame.Rect(self.text_box_rect.right - 110, self.text_box_rect.bottom - 40, 100, 30)
+        self.continue_button_text = self.font.render("Continue", True, self.text_color)
+
+        self.dialogue_active = False
+
+    def set_dialogue(self, dialogue_list):
+        self.dialogue = dialogue_list
+        self.current_dialogue_index = 0
+        self._start_typing()
+
+    def _start_typing(self):
+        self.displayed_text = ""
+        self.text_index = 0
+        self.last_update = pygame.time.get_ticks()
+        self.dialogue_active = True
+
+    def update(self):
+        if not self.dialogue_active:
+            return
+
+        now = pygame.time.get_ticks()
+        if now - self.last_update > self.typing_speed:
+            if self.text_index < len(self.dialogue[self.current_dialogue_index]):
+                self.displayed_text += self.dialogue[self.current_dialogue_index][self.text_index]
+                self.text_index += 1
+                self.last_update = now
+
+    def draw(self):
+        if not self.dialogue_active:
+            return
+
+        # Draw text box
+        text_box_surface = pygame.Surface((self.text_box_rect.width, self.text_box_rect.height), pygame.SRCALPHA)
+        text_box_surface.fill(self.bg_color)
+        pygame.draw.rect(text_box_surface, self.border_color, text_box_surface.get_rect(), 2)
+
+        # Render text
+        text_surface = self._render_text(self.displayed_text)
+        text_box_surface.blit(text_surface, (self.npc_image_rect.width + self.padding, self.padding))
+
+        # Draw continue button
+        pygame.draw.rect(text_box_surface, self.border_color, self.continue_button_rect)
+        text_box_surface.blit(self.continue_button_text, (self.continue_button_rect.x + 5, self.continue_button_rect.y + 5))
+
+        # Draw text box and NPC image on screen
+        self.screen.blit(text_box_surface, self.text_box_rect.topleft)
+        self.screen.blit(self.npc_image, (self.text_box_rect.left + self.padding, self.text_box_rect.top + self.padding))
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if self.continue_button_rect.collidepoint(event.pos) and self.dialogue_active:
+                self._advance_dialogue()
+
+    def _advance_dialogue(self):
+        if self.text_index >= len(self.dialogue[self.current_dialogue_index]):
+            self.current_dialogue_index += 1
+            if self.current_dialogue_index < len(self.dialogue):
+                self._start_typing()
+            else:
+                self.dialogue_active = False
+
+    def is_typing_finished(self):
+        return self.text_index >= len(self.dialogue[self.current_dialogue_index])
+
+    def is_dialogue_active(self):
+        return self.dialogue_active
+
+    def _render_text(self, text):
+        words = text.split(' ')
+        lines = []
+        current_line = ""
+
+        max_text_width = max(10, self.text_box_rect.width - self.npc_image_rect.width - 3 * self.padding)
+        for word in words:
+            test_line = current_line + word + " "
+            if self.font.size(test_line)[0] < max_text_width:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word + " "
+        lines.append(current_line)
+
+        text_surface_width = max(10, max_text_width)
+        text_surface_height = max(10, self.text_box_rect.height - 2 * self.padding)
+
+        text_surface = pygame.Surface((text_surface_width, text_surface_height), pygame.SRCALPHA)
+        text_surface.fill((0, 0, 0, 0))  # Transparent background
+
+        y = 0
+        for line in lines:
+            line_surface = self.font.render(line, True, self.text_color)
+            text_surface.blit(line_surface, (0, y))
+            y += self.font.get_linesize()
+
+        return text_surface
+
+import random
+import pygame
+
+# Particle class definition
+class Particle:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.x = random.randint(0, width)
+        self.y = random.randint(0, height)
+        self.size = random.randint(2, 5)
+        self.color = (173, 216, 230)  # Light blue color
+        self.speed_x = random.uniform(-1, 1)
+        self.speed_y = random.uniform(-1, 1)
+        self.depth = random.uniform(0.5, 1.5)  # Simulate 3D effect
+
+    def move(self):
+        self.x += self.speed_x * self.depth
+        self.y += self.speed_y * self.depth
+
+        if self.x < 0 or self.x > self.width:
+            self.speed_x *= -1
+        if self.y < 0 or self.y > self.height:
+            self.speed_y *= -1
+
+    def draw(self, win):
+        adjusted_size = self.size * self.depth
+        pygame.draw.rect(win, self.color, (self.x, self.y, adjusted_size, adjusted_size))
+
+class StartScreen:
+    def __init__(self, screen):
+        self.screen = screen
+        self.font = pygame.font.Font(None, 74)
+        self.credit_font = pygame.font.Font(None, 50)
+        
+        screen_width, screen_height = screen.get_size()
+        
+        # Particles
+        self.particles = [Particle(screen_width, screen_height) for _ in range(100)]
+        
+        # Buttons
+        button_width = 300
+        button_height = 75
+        button_gap = 100
+        start_y = screen_height // 2 - (button_height + button_gap)
+        
+        self.buttons = [
+            {"text": "Start Game", "rect": pygame.Rect(screen_width//2 - button_width//2, start_y, button_width, button_height), "action": "start_game"},
+            {"text": "Options", "rect": pygame.Rect(screen_width//2 - button_width//2, start_y + button_height + button_gap, button_width, button_height), "action": "options"},
+            {"text": "Credits", "rect": pygame.Rect(screen_width//2 - button_width//2, start_y + 2 * (button_height + button_gap), button_width, button_height), "action": "credits"}
+        ]
+        
+        # Rendered text surfaces
+        self.rendered_text = [
+            {"text": self.font.render(button["text"], True, (255, 255, 255)), "rect": button["rect"]} 
+            for button in self.buttons
+        ]
+        
+        self.selected_button = 0
+        self.state = "menu"  # States: "menu", "credits"
+        self.credits_y = screen_height
+        self.screen_height = screen_height
+
+        # Title animation setup
+        self.title_font = pygame.font.Font(None, 100)
+        self.title_text = "Radio Cowboy"
+        self.title_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)]
+        self.title_color_index = [random.randint(0, len(self.title_colors)-1) for _ in range(len(self.title_text))]
+        self.title_positions = [100] * len(self.title_text)
+        self.title_directions = [random.choice([-1, 1]) for _ in range(len(self.title_text))]
+        self.color_change_speed = [random.uniform(0.005, 0.02) for _ in range(len(self.title_text))]
+
+    def update(self):
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_DOWN] and self.state == "menu":
+            self.selected_button = (self.selected_button + 1) % len(self.buttons)
+            pygame.time.wait(150)  # To prevent rapid changes
+        if keys[pygame.K_UP] and self.state == "menu":
+            self.selected_button = (self.selected_button - 1) % len(self.buttons)
+            pygame.time.wait(150)  # To prevent rapid changes
+        
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_click = pygame.mouse.get_pressed()
+
+        for index, button in enumerate(self.buttons):
+            if button["rect"].collidepoint(mouse_pos):
+                self.selected_button = index
+                if mouse_click[0] and self.state == "menu":
+                    return button["action"]
+        
+        if keys[pygame.K_RETURN] and self.state == "menu":
+            return self.buttons[self.selected_button]["action"]
+        
+        if self.state == "credits":
+            self.credits_y -= 2  # Scroll speed
+            if self.credits_y < -100:
+                self.credits_y = self.screen_height
+                self.state = "menu"
+
+        for particle in self.particles:
+            particle.move()
+        
+        for i in range(len(self.title_text)):
+            self.title_color_index[i] = (self.title_color_index[i] + self.color_change_speed[i]) % len(self.title_colors)
+            self.title_positions[i] += self.title_directions[i] * 0.2
+            if self.title_positions[i] > 110 or self.title_positions[i] < 90:
+                self.title_directions[i] *= -1
+
+        return None
+
+    def draw(self):
+        self.screen.fill((0, 0, 0))
+        
+        screen_width, screen_height = self.screen.get_size()
+        
+        # Draw particles
+        for particle in self.particles:
+            particle.draw(self.screen)
+        
+        if self.state == "menu":
+            for i, char in enumerate(self.title_text):
+                color = self.title_colors[int(self.title_color_index[i]) % len(self.title_colors)]
+                position = self.title_positions[i]
+                char_surface = self.title_font.render(char, True, color)
+                self.screen.blit(char_surface, (screen_width//2 - (len(self.title_text)*50)//2 + i*50, position))
+            
+            for index, item in enumerate(self.rendered_text):
+                text_color = (255, 255, 255) if index != self.selected_button else (0, 128, 255)
+                rendered = self.font.render(self.buttons[index]["text"], True, text_color)
+                self.screen.blit(rendered, (item["rect"].x, item["rect"].y))
+        
+        elif self.state == "credits":
+            credits_text = [
+                "Big thanks to me,",
+                "and to Pete for being",
+                "so enthusiastic,and most of all",
+                "to jules for putting up with me"
+            ]
+            
+            for i, line in enumerate(credits_text):
+                text_surface = self.credit_font.render(line, True, (255, 255, 255))
+                self.screen.blit(text_surface, (screen_width//2 - text_surface.get_width()//2, self.credits_y + i * 60))
+
+import pygame
+import random
+
+class Star:
+    def __init__(self, screen_width, screen_height):
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.reset()
+
+    def reset(self):
+        self.x = random.randint(0, self.screen_width)
+        self.y = random.randint(0, self.screen_height)
+        self.speed = random.uniform(1, 3)
+        self.size = random.randint(1, 3)
+        self.color = (255, 255, 255)
+
+    def update(self, velocity):
+        self.x -= velocity.x * self.speed
+        self.y -= velocity.y * self.speed
+
+        if self.x < 0 or self.x > self.screen_width or self.y < 0 or self.y > self.screen_height:
+            self.reset()
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, self.color, (self.x, self.y, self.size, self.size))
+
+class StarField:
+    def __init__(self, screen_width, screen_height, num_stars):
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.stars = [Star(screen_width, screen_height) for _ in range(num_stars)]
+
+    def update(self, velocity):
+        for star in self.stars:
+            star.update(velocity)
+
+    def draw(self, screen):
+        for star in self.stars:
+            star.draw(screen)
+
